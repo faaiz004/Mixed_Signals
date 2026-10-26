@@ -26,7 +26,7 @@ from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 from build import TASKS, build_examples
 
 # ---------------------------------------------------------------- fixed settings
-# Same for every checkpoint.
+# Same for every checkpoint. Change only deliberately, and report the values.
 GEN_CONFIG = {
     "direct": {
         "max_new_tokens": 64,
@@ -54,8 +54,12 @@ def pick_device():
     return "cpu"
 
 
-def load_model(model_path, device, attn_implementation):
-    dtype = torch.bfloat16 if device == "cuda" else torch.float16 if device == "mps" else torch.float32
+DTYPES = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}
+
+
+def load_model(model_path, device, attn_implementation, dtype_name="float32"):
+    dtype = DTYPES[dtype_name]
+    print(f"dtype: {dtype}")
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
         model_path,
         torch_dtype=dtype,
@@ -123,6 +127,8 @@ def main():
     ap.add_argument("--data", default=None, help="dataset_with_image folder (default: build.py's)")
     ap.add_argument("--out_dir", default="outputs")
     ap.add_argument("--attn", default="sdpa", help="sdpa (default) or flash_attention_2")
+    ap.add_argument("--dtype", default="float32", choices=list(DTYPES),
+                    help="model weights precision (default float32)")
     ap.add_argument("--limit", type=int, default=None, help="only the first N examples per task (testing)")
     ap.add_argument("--dry_run", action="store_true", help="build examples and stop, no model")
     args = ap.parse_args()
@@ -159,14 +165,14 @@ def main():
     meta_path = out_path.with_suffix(".meta.json")
     meta_path.write_text(json.dumps({
         "model": args.model, "name": args.name, "condition": args.condition,
-        "tasks": args.tasks, "batch_size": args.batch_size, "attn": args.attn,
+        "tasks": args.tasks, "batch_size": args.batch_size, "attn": args.attn, "dtype": args.dtype,
         "gen_config": GEN_CONFIG[args.condition], "decoding": DECODING,
         "image_config": IMAGE_CONFIG, "torch": torch.__version__,
     }, indent=2))
 
     device = pick_device()
     print(f"Loading {args.model} on {device} ...")
-    model, processor = load_model(args.model, device, args.attn)
+    model, processor = load_model(args.model, device, args.attn, args.dtype)
 
     # 4) Generate task by task (similar prompt lengths -> less padding), in batches.
     cfg = GEN_CONFIG[args.condition]
