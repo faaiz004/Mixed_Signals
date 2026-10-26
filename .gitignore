@@ -1,0 +1,6 @@
+cs689_venv/
+dataset_with_image/
+__pycache__/
+outputs/
+scores/
+.DS_Store
