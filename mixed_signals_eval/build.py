@@ -197,6 +197,35 @@ def build_examples(condition, tasks=TASKS, data_dir=DATA_DIR):
     return examples
 
 
+def build_answer_key(tasks=TASKS, data_dir=DATA_DIR):
+    """(task, sample_id) -> answers and metadata, WITHOUT decoding images.
+
+    Uses the same per-task logic and the same VSR numbering as build_examples,
+    so score.py interprets replies exactly as the examples were built.
+    """
+    key = {}
+    for task in tasks:
+        ds = load_task(task, data_dir)
+        if "image" in ds.column_names:
+            ds = ds.remove_columns("image")
+        for i in range(len(ds)):
+            record = ds[i]
+            if task == "vsr":
+                record["_vsr_id"] = f"vsr_{i:04d}"
+            _, a, a_prime, complexity = TASK_BUILDERS[task](record, "aligned")
+            entry = {
+                "answer_image": a,
+                "answer_text": a_prime,
+                "a_equals_a_prime": _same(a, a_prime),
+                "complexity": complexity,
+            }
+            if task == "science":
+                choices = record["choices"]
+                entry["choices"] = ast.literal_eval(choices) if isinstance(choices, str) else list(choices)
+            key[(task, _sample_id(record, task))] = entry
+    return key
+
+
 # ---------------------------------------------------------------- self-check
 if __name__ == "__main__":
     import argparse
