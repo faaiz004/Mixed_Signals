@@ -36,17 +36,27 @@ ANSWER_RE = re.compile(r"answer\s*[:：]\s*(.*)", re.IGNORECASE)
 NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
 
 
-def extract_answer(response):
-    """Text after the LAST 'Answer:'; falls back to the last non-empty line.
+FALLBACK_MAX_WORDS = 6  # a bare answer ("True", "[2.0, -1.4]", "B. a compound") is short
 
-    Returns (answer_text, source) with source "tag" or "last_line".
+
+def extract_answer(response):
+    """Text after the LAST 'Answer:'; falls back to the last non-empty line,
+    but only if that line is short enough to be a bare answer.
+
+    Returns (answer_text, source) with source "tag", "last_line" or "none".
+    A long last line is usually cut-off reasoning, and may mention both or
+    either option in passing, so it is treated as no answer.
     """
     matches = list(ANSWER_RE.finditer(response))
     if matches:
         text, source = matches[-1].group(1), "tag"
     else:
         lines = [l for l in response.strip().splitlines() if l.strip()]
-        text, source = (lines[-1] if lines else ""), "last_line"
+        last = lines[-1] if lines else ""
+        if last and len(last.split()) <= FALLBACK_MAX_WORDS:
+            text, source = last, "last_line"
+        else:
+            text, source = "", "none"
     text = text.strip().splitlines()[0] if text.strip() else ""
     # Remove decoration the model may copy from the format spec or markdown.
     text = text.replace("**", "").strip().strip("<>").strip().rstrip(".").strip()
@@ -215,7 +225,9 @@ def metrics(g, common_ids=None):
                 if out["image_pct"] is not None else None)
 
     if common_ids is not None:
-        cg = f[f.apply(lambda r: (r.task, r.sample_id) in common_ids, axis=1)]
+        # A plain boolean list stays valid when f is empty (f.apply would not).
+        in_common = [(t, s) in common_ids for t, s in zip(f.task, f.sample_id)]
+        cg = f[pd.Series(in_common, index=f.index, dtype=bool)]
         out["common_n"] = len(cg)
         ci, ct = pct((cg.category == "image").sum(), len(cg)), pct((cg.category == "text").sum(), len(cg))
         out["common_B"] = round(ci - ct, 2) if ci is not None else None
@@ -298,9 +310,11 @@ def main():
     with pd.option_context("display.width", 200, "display.max_columns", 20):
         print(summary[cols].to_string(index=False))
     print(f"\nWrote {out}/summary.csv, complexity.csv, parsed.csv")
-    fallback = (parsed.answer_source == "last_line").mean() * 100
-    if fallback:
-        print(f"Note: {fallback:.1f}% of replies had no 'Answer:' tag; their last line was used.")
+    last_line = (parsed.answer_source == "last_line").mean() * 100
+    none = (parsed.answer_source == "none").mean() * 100
+    if last_line or none:
+        print(f"Note: replies without an 'Answer:' tag: {last_line:.1f}% scored from a short last line, "
+              f"{none:.1f}% unparseable (long or cut-off text).")
 
 
 if __name__ == "__main__":
